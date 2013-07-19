@@ -13,7 +13,6 @@ RELATED WORKS
 - Add to Word Search (vimscript #3955) can add the keyword under the cursor to
   the search pattern and search forward / backward like * / #.
 
-
 USAGE
 <Leader>+               Add the current whole \<word\> as an alternative to the
                         search pattern, similar to the star command.
@@ -23,6 +22,14 @@ USAGE
 
 {Visual}<Leader>+       Add the current selection as an alternative to the
                         search pattern.
+                        For a blockwise-visual selection, each line of the
+                        block (minus leading and trailing whitespace) is added
+                        as a separate alternative search pattern. When the
+                        first selected line of the block is surrounded by non-
+                        keyword characters, the match is done with \<...\>.
+                        If the blockwise-visual selection is only comprised
+                        of a single line, all WORDs of that line are added as
+                        separate alternative whole \<word\> search patterns.
 
 <Leader>-               Remove the current whole \<word\> from the alternatives
                         in the search pattern.
@@ -32,6 +39,8 @@ USAGE
 
 {Visual}<Leader>-       Remove the current selection from the alternatives in
                         the search pattern.
+                        For a blockwise-visual selection, this has the same
+                        special behavior as {Visual}<Leader>+.
 
 :SearchAdd {expr}       Add {expr} as an alternative to the search pattern.
 

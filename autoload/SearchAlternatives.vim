@@ -1,14 +1,24 @@
 " SearchAlternatives.vim: Add / subtract alternatives from the search pattern.
 "
 " DEPENDENCIES:
-"   - ingosearch.vim autoload script.
+"   - ingo/collections.vim autoload script
+"   - ingo/regexp/magic.vim autoload script
+"   - ingo/str.vim autoload script
 "
-" Copyright: (C) 2011-2012 Ingo Karkat
+" Copyright: (C) 2011-2013 Ingo Karkat
 "   The VIM LICENSE applies to this script; see ':help copyright'.
 "
 " Maintainer:	Ingo Karkat <ingo@karkat.de>
 "
 " REVISION	DATE		REMARKS
+"   1.10.009	20-Jun-2013	ENH: Implement command completion that offers
+"				existing alternatives (to remove or
+"				clone-and-modify them).
+"   1.10.008	19-Jun-2013	ENH: Blockwise <Leader>+ / <Leader>- add /
+"				remove each partial selected trimmed line as a
+"				separate search alternative, or individual words
+"				when a single line is blockwise-selected.
+"   1.01.007	24-May-2013	Move ingosearch.vim to ingo-library.
 "   1.00.006	22-Mar-2012	BUG: Missing closing parenthesis caused E116.
 "				FIX: Must split only on \|, but not on \\|.
 "	005	08-Mar-2012	ENH: Add :SearchAdd and :SearchRemove commands.
@@ -25,6 +35,8 @@
 "				care, since there is no penalty when multiple
 "				branches match.
 "	001	10-Jun-2011	file creation
+let s:save_cpo = &cpo
+set cpo&vim
 
 function! SearchAlternatives#AddPattern( searchPattern )
     if empty(@/)
@@ -36,7 +48,7 @@ function! SearchAlternatives#AddPattern( searchPattern )
 	" they cannot be neutralized. However, this can be used to do a
 	" case-insensitive search for alternatives by initializing the search
 	" with a pattern like /\cxyz/.
-	let @/ .= ingosearch#GetNormalizeMagicnessAtom(@/) . '\|' . a:searchPattern
+	let @/ .= ingo#regexp#magic#GetNormalizeMagicnessAtom(@/) . '\|' . a:searchPattern
     endif
 
     " The search pattern is added to the search history, as '/' or '*' would do.
@@ -44,10 +56,10 @@ function! SearchAlternatives#AddPattern( searchPattern )
 endfunction
 function! s:SplitIntoAlternatives( pattern )
     let l:pattern = a:pattern
-    if ingosearch#HasMagicAtoms(l:pattern)
+    if ingo#regexp#magic#HasMagicAtoms(l:pattern)
 	" Also account for different representations of the same pattern, e.g.
 	" \V vs. individual escaping.
-	let l:pattern = ingosearch#NormalizeMagicness(l:pattern)
+	let l:pattern = ingo#regexp#magic#Normalize(l:pattern)
     endif
 
     " Split only on \|, but not on \\|.
@@ -73,11 +85,53 @@ function! SearchAlternatives#RemPattern( searchPattern )
     return 1
 endfunction
 
-function! SearchAlternatives#AddLiteralText( text, isWholeWordSearch )
-    call SearchAlternatives#AddPattern(ingosearch#LiteralTextToSearchPattern( a:text, a:isWholeWordSearch, '/'))
+function! s:TrimmedLines( text )
+    return ingo#collections#UniqueStable(
+    \   filter(
+    \       map(split(a:text, '\n'), 'ingo#str#Trim(v:val)'),
+    \       '! empty(v:val)'
+    \   )
+    \)
 endfunction
-function! SearchAlternatives#RemLiteralText( text, isWholeWordSearch )
-    if ! SearchAlternatives#RemPattern(ingosearch#LiteralTextToSearchPattern( a:text, a:isWholeWordSearch, '/' ))
+function! s:IsFirstSelectedLineSurroundedByNonKeywords()
+    return search('\%' . line("'<") . 'l\%(^\|\%(\k\@!.\)\)\s*\%' . col("'<") . 'c.*\%V.\%($\|\%V\@!\%(\k\@!.\)\)', 'bcnW')
+endfunction
+function! SearchAlternatives#AddLiteralText( text, mode, isWholeWordSearch )
+    if a:mode ==# "\<C-v>"
+	if a:text =~# '\n'
+	    for l:line in s:TrimmedLines(a:text)
+		call SearchAlternatives#AddPattern(ingo#regexp#FromLiteralText(l:line, s:IsFirstSelectedLineSurroundedByNonKeywords(), '/'))
+	    endfor
+	else
+	    for l:word in split(a:text, '\s\+')
+		call SearchAlternatives#AddPattern(ingo#regexp#FromLiteralText(l:word, 1, '/'))
+	    endfor
+	endif
+    else
+	call SearchAlternatives#AddPattern(ingo#regexp#FromLiteralText(a:text, a:isWholeWordSearch, '/'))
+    endif
+endfunction
+function! SearchAlternatives#RemLiteralText( text, mode, isWholeWordSearch )
+    if a:mode ==# "\<C-v>"
+	let l:success = 0
+	if a:text =~# '\n'
+	    for l:line in s:TrimmedLines(a:text)
+		if SearchAlternatives#RemPattern(ingo#regexp#FromLiteralText(l:line, s:IsFirstSelectedLineSurroundedByNonKeywords(), '/'))
+		    let l:success = 1
+		endif
+	    endfor
+	else
+	    for l:word in split(a:text, '\s\+')
+		if SearchAlternatives#RemPattern(ingo#regexp#FromLiteralText(l:word, 1, '/'))
+		    let l:success = 1
+		endif
+	    endfor
+	endif
+    else
+	let l:success = SearchAlternatives#RemPattern(ingo#regexp#FromLiteralText(a:text, a:isWholeWordSearch, '/'))
+    endif
+
+    if ! l:success
 	" The text wasn't found in the search pattern; inform the user via a
 	" bell.
 	execute "normal! \<C-\>\<C-n>\<Esc>"
@@ -94,10 +148,10 @@ function! s:ErrorMsg( text )
     echohl None
 endfunction
 function! s:EchoSearchPattern()
-    " Note: We do not use the EchoWithoutScrolling#Echo function even if
-    " available, because for an Ex command, it makes more sense to show the
-    " entire pattern, even if it causes the hit-enter prompt. (The user has just
-    " acknowledged the command-line via <CR> anyhow.)
+    " Note: We do not use the ingo#avoidprompt#Echo function, because for an Ex
+    " command, it makes more sense to show the entire pattern, even if it causes
+    " the hit-enter prompt. (The user has just acknowledged the command-line via
+    " <CR> anyhow.)
     echo '/'.@/
 endfunction
 function! SearchAlternatives#AddCommand( searchPattern )
@@ -118,7 +172,7 @@ function! SearchAlternatives#RemCommand( patternCount, searchPattern )
 	    return
 	endif
     else
-	let l:searchPattern = (ingosearch#HasMagicAtoms(a:searchPattern) ? ingosearch#NormalizeMagicness(a:searchPattern) : a:searchPattern)
+	let l:searchPattern = (ingo#regexp#magic#HasMagicAtoms(a:searchPattern) ? ingo#regexp#magic#Normalize(a:searchPattern) : a:searchPattern)
     endif
 
     if SearchAlternatives#RemPattern(l:searchPattern)
@@ -129,4 +183,16 @@ function! SearchAlternatives#RemCommand( patternCount, searchPattern )
     endif
 endfunction
 
+
+function! SearchAlternatives#Complete( ArgLead, CmdLine, CursorPos )
+    " Filter the individual alternatives according to the argument lead. Allow
+    " to omit the frequent initial \< atom in the lead.
+    return filter(
+    \	ingo#collections#UniqueStable(s:SplitIntoAlternatives(@/)),
+    \	"v:val =~ '^\\%(\\\\<\\)\\?\\V' . " . string(escape(a:ArgLead, '\'))
+    \)
+endfunction
+
+let &cpo = s:save_cpo
+unlet s:save_cpo
 " vim: set ts=8 sts=4 sw=4 noexpandtab ff=unix fdm=syntax :
